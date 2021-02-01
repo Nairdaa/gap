@@ -273,7 +273,7 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 
 						float gMinVel = SquareRoot(Pow(gInitialVel[0], 2.0) + Pow(gInitialVel[1], 2.0));
 						float gInitialTick = Pow((gMinVel - 16.97) / 30.02, 1 / 0.5029);
-						float gFallTimeTicks = gFallTime * 1/GetTickInterval(); // carnifex' fault if it bugs
+						float gFallTimeTicks = gFallTime * (1/GetTickInterval()); // carnifex' fault if it bugs
 						float gVelGain = (30.02 * Pow(gInitialTick + gFallTimeTicks, 0.5029) + 16.97) - (30.02 * Pow(gInitialTick, 0.5029) + 16.97);
 						float gMinVelOneTick = gMinVel - gVelGain;
 						
