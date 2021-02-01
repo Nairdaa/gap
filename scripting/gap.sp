@@ -261,9 +261,10 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 						}
 							
 						float m_flGravity = GetEntityGravity(client);
-
+						
+						gDeadwinter = SquareRoot(2 * 800 * 57.0) - (gGravity  * m_flGravity * 1.5 * GetTickInterval());
 						gFallVelocity = -1 * SquareRoot(2 * gGravity * m_flGravity * gFallHeight); // z velocity player should have right before hitting the ground
-						gFallTime = -1 * (gFallVelocity - 289.99) / gGravity * m_flGravity; // The amount of time the jump should have taken
+						gFallTime = -1 * (gFallVelocity - gDeadwinter) / gGravity * m_flGravity; // The amount of time the jump should have taken
 						
 						float gInitialVel[3];
 						
