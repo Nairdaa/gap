@@ -260,10 +260,10 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 							gFallHeight = 64 - difference[2];
 						}
 							
-						gFallVelocity = -1 * SquareRoot(2 * gGravity * gFallHeight); // z velocity player should have right before hitting the ground
-						
-						gFallTime = -1 * (gFallVelocity - 289.99) / gGravity; // The amount of time the jump should have taken
-						
+						float m_flGravity = GetEntityGravity(client);
+
+						gFallVelocity = -1 * SquareRoot(2 * gGravity * m_flGravity * gFallHeight); // z velocity player should have right before hitting the ground
+						gFallTime = -1 * (gFallVelocity - 289.99) / gGravity * m_flGravity; // The amount of time the jump should have taken
 						
 						float gInitialVel[3];
 						
