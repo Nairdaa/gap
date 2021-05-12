@@ -17,9 +17,11 @@ public Plugin myinfo =
 	name = "Gap",
 	author = "ici, velocity calculation by Saul and implemented by Charles_(hypnos)",
 	description = "",
-	version = "1.0",
+	version = "1.1",
 	url = ""
 }
+
+EngineVersion gEV_Type = Engine_Unknown;
 
 bool gGap[MAXPLAYERS + 1];
 int gCurrPoint[MAXPLAYERS + 1];
@@ -61,21 +63,21 @@ enum struct Line
 
 public void OnPluginStart()
 {
-	EngineVersion engine = GetEngineVersion();
-	if (engine != Engine_CSS)
-	{
-		SetFailState("Game is not supported yet. Soon™");
-	}
-
 	RegConsoleCmd("sm_gap", ConCmd_Gap, "Activates the feature", .flags = 0)
 
 	ConVar sv_gravity = FindConVar("sv_gravity");
 	sv_gravity.AddChangeHook(OnGravityChanged);
 	gGravity = sv_gravity.FloatValue;
 
-	// sprites/laser.vmt
-	// sprites/laserbeam.vmt
-	gCvarBeamMaterial = CreateConVar("gap_beams_material", "sprites/laser.vmt", "Material used for beams. Server restart needed for this to take effect.");
+	gEV_Type = GetEngineVersion();
+	if(gEV_Type == Engine_CSS)
+	{
+		gCvarBeamMaterial = CreateConVar("gap_beams_material", "sprites/laser.vmt", "Material used for beams. Server restart needed for this to take effect.");
+	}
+	else
+	{
+		gCvarBeamMaterial = CreateConVar("gap_beams_material", "sprites/laserbeam.vmt", "Material used for beams. Server restart needed for this to take effect.");
+	}
 }
 
 public void OnGravityChanged(ConVar convar, const char[] oldValue, const char[] newValue)
@@ -135,7 +137,14 @@ void OpenMenu(int client)
 		panel.DrawItem(gridText);
 	}
 
-	panel.CurrentKey = 10;
+	if(gEV_Type == Engine_CSS)
+	{
+		panel.CurrentKey = 10;
+	}
+	else
+	{
+		panel.CurrentKey = 9;
+	}
 	panel.DrawItem("Exit", ITEMDRAW_CONTROL);
 
 	gGap[client] = panel.Send(client, handler, MENU_TIME_FOREVER);
@@ -289,7 +298,7 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 						}
 
 
-						// Credit to Charles_(hyonos) for the implementation of velocity stuff (https://hyps.dev/)
+						// Credit to Charles_(hypnos) for the implementation of velocity stuff (https://hyps.dev/)
 						Print2(client, "{CHAT}Distance: {YELLOWORANGE}%.2f {CHAT}DiifX: {YELLOWORANGE}%.2f {CHAT}DiffY: {YELLOWORANGE}%.2f {CHAT}DiffZ: {YELLOWORANGE}%.2f {CHAT}MinVelocity: {YELLOWORANGE}%.2f {CHAT}MinVelocityWith1Tick: {YELLOWORANGE}%.2f",
 										distance,
 										difference[0], difference[1], difference[2], gMinVel, gMinVelOneTick);
@@ -316,7 +325,7 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 
 			OpenMenu(client);
 		}
-		case 10:
+		case 9, 10:
 		{
 			gGap[client] = false;
 
@@ -332,6 +341,7 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 				gCursorTimer[client] = null;
 			}
 		}
+
 	}
 	return 0;
 }
