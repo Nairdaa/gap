@@ -1,4 +1,5 @@
-#include <sourcemod>
+// #include <sourcemod> /* No need, the compiler adds that on the top of .sp itself */
+/* Header files */
 #include <cstrike>
 #include <sdktools>
 #include "colors.sp"
@@ -12,6 +13,30 @@
 #define RING_END_RADIUS 7.7
 #define CURSOR_SIZE 3.0
 
+/* Globals */
+EngineVersion gEV_Type = Engine_Unknown;
+
+bool gB_ShowCursor[MAXPLAYERS + 1];
+bool gB_Gap[MAXPLAYERS + 1];
+
+Handle gH_CursorTimer[MAXPLAYERS + 1];
+Handle gH_PreviewTimer[MAXPLAYERS + 1];
+
+int gI_CurrPoint[MAXPLAYERS + 1];
+int gI_SnapToGrid[MAXPLAYERS + 1];
+int gI_SnapValues[] = {0, 1, 2, 4, 8, 16, 32, 64};
+int gI_ModelIndex;
+int gI_ColorRed[4] = {255, 0, 0, 255};
+int gI_ColorGreen[4] = {0, 255, 0, 255};
+int gI_ColorWhite[4] = {255, 255, 255, 255};
+
+float gF_PointPos[MAXPLAYERS + 1][NUM_POINTS][3];
+float gF_Gravity;
+
+/* CVARs */
+ConVar gCV_BeamMaterial;
+
+/* Plugin information */
 public Plugin myinfo =
 {
 	name = "Gap",
@@ -21,34 +46,14 @@ public Plugin myinfo =
 	url = ""
 }
 
-EngineVersion gEV_Type = Engine_Unknown;
-
-bool gGap[MAXPLAYERS + 1];
-int gCurrPoint[MAXPLAYERS + 1];
-float gPointPos[MAXPLAYERS + 1][NUM_POINTS][3];
-Handle gCursorTimer[MAXPLAYERS + 1];
-Handle gPreviewTimer[MAXPLAYERS + 1];
-bool gShowCursor[MAXPLAYERS + 1];
-
-int gSnapToGrid[MAXPLAYERS + 1];
-int gSnapValues[] = {0, 1, 2, 4, 8, 16};
-
-ConVar gCvarBeamMaterial;
-int gModelIndex;
-int gColorRed[4] = {255, 0, 0, 255};
-int gColorGreen[4] = {0, 255, 0, 255};
-int gColorWhite[4] = {255, 255, 255, 255};
-
-float gGravity;
-
-float gCursorStart[3][3] =
+float gF_CursorStart[3][3] =
 {
 	{CURSOR_SIZE, 0.0, 0.0},
 	{0.0, CURSOR_SIZE, 0.0},
 	{0.0, 0.0, CURSOR_SIZE}
 };
 
-float gCursorEnd[3][3] =
+float gF_CursorEnd[3][3] =
 {
 	{-CURSOR_SIZE, 0.0, 0.0},
 	{0.0, -CURSOR_SIZE, 0.0},
@@ -63,26 +68,30 @@ enum struct Line
 
 public void OnPluginStart()
 {
-	RegConsoleCmd("sm_gap", ConCmd_Gap, "Activates the feature", .flags = 0)
+	RegConsoleCmd("sm_gap", CommandGap, "Activates the feature", .flags = 0)
 
 	ConVar sv_gravity = FindConVar("sv_gravity");
 	sv_gravity.AddChangeHook(OnGravityChanged);
-	gGravity = sv_gravity.FloatValue;
+	gF_Gravity = sv_gravity.FloatValue;
 
-	gEV_Type = GetEngineVersion();
+	if (gEV_Type != Engine_CSS || gEV_Type != Engine_CSGO)
+	{
+		SetFailState("Game not supported.");
+	}
+
 	if(gEV_Type == Engine_CSS)
 	{
-		gCvarBeamMaterial = CreateConVar("gap_beams_material", "sprites/laser.vmt", "Material used for beams. Server restart needed for this to take effect.");
+		gCV_BeamMaterial = CreateConVar("gap_beams_material", "sprites/laser.vmt", "Material used for beams. Server restart needed for this to take effect.");
 	}
 	else
 	{
-		gCvarBeamMaterial = CreateConVar("gap_beams_material", "sprites/laserbeam.vmt", "Material used for beams. Server restart needed for this to take effect.");
+		gCV_BeamMaterial = CreateConVar("gap_beams_material", "sprites/laserbeam.vmt", "Material used for beams. Server restart needed for this to take effect.");
 	}
 }
 
 public void OnGravityChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
-	gGravity = StringToFloat(newValue);
+	gF_Gravity = StringToFloat(newValue);
 }
 
 public void OnClientPutInServer(int client)
@@ -93,11 +102,11 @@ public void OnClientPutInServer(int client)
 public void OnMapStart()
 {
 	char buff[PLATFORM_MAX_PATH];
-	gCvarBeamMaterial.GetString(buff, sizeof(buff));
-	gModelIndex = PrecacheModel(buff, true);
+	gCV_BeamMaterial.GetString(buff, sizeof(buff));
+	gI_ModelIndex = PrecacheModel(buff, true);
 }
 
-public Action ConCmd_Gap(int client, int args)
+public Action CommandGap(int client, int args)
 {
 	if (!client)
 	{
@@ -117,7 +126,7 @@ void OpenMenu(int client)
 	panel.DrawItem("Select point");
 
 	// Feeling kinda lazy today
-	if (gShowCursor[client])
+	if (gB_ShowCursor[client])
 	{
 		panel.DrawItem("Show cursor: on");
 	}
@@ -126,14 +135,14 @@ void OpenMenu(int client)
 		panel.DrawItem("Show cursor: off");
 	}
 
-	if (gSnapToGrid[client] == 0)
+	if (gI_SnapToGrid[client] == 0)
 	{
 		panel.DrawItem("Snap to grid: off");
 	}
 	else
 	{
 		char gridText[32];
-		FormatEx(gridText, sizeof(gridText), "Snap to grid: %d", gSnapValues[ gSnapToGrid[client] ] );
+		FormatEx(gridText, sizeof(gridText), "Snap to grid: %d", gI_SnapValues[ gI_SnapToGrid[client] ] );
 		panel.DrawItem(gridText);
 	}
 
@@ -147,16 +156,16 @@ void OpenMenu(int client)
 	}
 	panel.DrawItem("Exit", ITEMDRAW_CONTROL);
 
-	gGap[client] = panel.Send(client, handler, MENU_TIME_FOREVER);
+	gB_Gap[client] = panel.Send(client, handler, MENU_TIME_FOREVER);
 
-	if (gGap[client])
+	if (gB_Gap[client])
 	{
-		if (gCursorTimer[client] != null)
+		if (gH_CursorTimer[client] != null)
 		{
-			KillTimer(gCursorTimer[client]);
-			gCursorTimer[client] = null;
+			KillTimer(gH_CursorTimer[client]);
+			gH_CursorTimer[client] = null;
 		}
-		gCursorTimer[client] = CreateTimer(CURSOR_TIME, Cursor, GetClientUserId(client), .flags = TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+		gH_CursorTimer[client] = CreateTimer(CURSOR_TIME, Cursor, GetClientUserId(client), .flags = TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 	}
 
 	delete panel;
@@ -165,13 +174,13 @@ void OpenMenu(int client)
 public Action Cursor(Handle timer, int userid)
 {
 	int client = GetClientOfUserId(userid);
-	if (!client || !gGap[client])
+	if (!client || !gB_Gap[client])
 	{
-		gCursorTimer[client] = null;
+		gH_CursorTimer[client] = null;
 		return Plugin_Stop;
 	}
 
-	if (gCurrPoint[client] == POINT_A)
+	if (gI_CurrPoint[client] == POINT_A)
 	{
 		float endPos[3];
 
@@ -180,9 +189,9 @@ public Action Cursor(Handle timer, int userid)
 			return Plugin_Continue;
 		}
 
-		DrawCursor(client, endPos, 1.0, CURSOR_TIME, gColorWhite);
+		DrawCursor(client, endPos, 1.0, CURSOR_TIME, gI_ColorWhite);
 	}
-	else if (gCurrPoint[client] == POINT_B)
+	else if (gI_CurrPoint[client] == POINT_B)
 	{
 		float endPos[3];
 
@@ -192,11 +201,11 @@ public Action Cursor(Handle timer, int userid)
 		}
 
 		float startPos[3];
-		startPos = gPointPos[client][ POINT_A ];
+		startPos = gF_PointPos[client][ POINT_A ];
 
-		DrawRing(client, startPos, RING_START_RADIUS, RING_END_RADIUS, CURSOR_TIME, gColorGreen, FBEAM_FADEIN);
-		DrawCursor(client, endPos, 1.0, CURSOR_TIME, gColorWhite);
-		DrawLine(client, gPointPos[ client ][ POINT_A ], endPos, 1.0, CURSOR_TIME, gColorWhite);
+		DrawRing(client, startPos, RING_START_RADIUS, RING_END_RADIUS, CURSOR_TIME, gI_ColorGreen, FBEAM_FADEIN);
+		DrawCursor(client, endPos, 1.0, CURSOR_TIME, gI_ColorWhite);
+		DrawLine(client, gF_PointPos[ client ][ POINT_A ], endPos, 1.0, CURSOR_TIME, gI_ColorWhite);
 	}
 
 	return Plugin_Continue;
@@ -206,18 +215,18 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 {
 	if (action != MenuAction_Select)
 	{
-		gGap[client] = false;
+		gB_Gap[client] = false;
 
-		if (gPreviewTimer[client] != null)
+		if (gH_PreviewTimer[client] != null)
 		{
-			KillTimer(gPreviewTimer[client]);
-			gPreviewTimer[client] = null;
+			KillTimer(gH_PreviewTimer[client]);
+			gH_PreviewTimer[client] = null;
 		}
 
-		if (gCursorTimer[client] != null)
+		if (gH_CursorTimer[client] != null)
 		{
-			KillTimer(gCursorTimer[client]);
-			gCursorTimer[client] = null;
+			KillTimer(gH_CursorTimer[client]);
+			gH_CursorTimer[client] = null;
 		}
 
 		return 0;
@@ -227,29 +236,29 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 	{
 		case 1: // Select point
 		{
-			if (GetAimPosition(client, gPointPos[ client ][ gCurrPoint[client] ]))
+			if (GetAimPosition(client, gF_PointPos[ client ][ gI_CurrPoint[client] ]))
 			{
-				if (gCurrPoint[client] == POINT_A && gPreviewTimer[client] != null)
+				if (gI_CurrPoint[client] == POINT_A && gH_PreviewTimer[client] != null)
 				{
 					// Don't retrigger the timer
-					KillTimer(gPreviewTimer[client]);
-					gPreviewTimer[client] = null;
+					KillTimer(gH_PreviewTimer[client]);
+					gH_PreviewTimer[client] = null;
 				}
 
-				gCurrPoint[client]++;
+				gI_CurrPoint[client]++;
 
-				if (gCurrPoint[client] == NUM_POINTS)
+				if (gI_CurrPoint[client] == NUM_POINTS)
 				{
 					float startPos[3], endPos[3];
 
-					startPos = gPointPos[client][ POINT_A ];
-					endPos   = gPointPos[client][ POINT_B ];
+					startPos = gF_PointPos[client][ POINT_A ];
+					endPos   = gF_PointPos[client][ POINT_B ];
 
 					// Draw a line between the two points
-					DrawRing(client, startPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gColorGreen, FBEAM_FADEIN);
-					DrawRing(client, endPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gColorRed, FBEAM_FADEIN);
-					DrawLine(client, startPos, endPos, 1.0, PREVIEW_TIME, gColorWhite);
-					gPreviewTimer[client] = CreateTimer(PREVIEW_TIME, CompleteGap, GetClientUserId(client), .flags = TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+					DrawRing(client, startPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gI_ColorGreen, FBEAM_FADEIN);
+					DrawRing(client, endPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gI_ColorRed, FBEAM_FADEIN);
+					DrawLine(client, startPos, endPos, 1.0, PREVIEW_TIME, gI_ColorWhite);
+					gH_PreviewTimer[client] = CreateTimer(PREVIEW_TIME, CompleteGap, GetClientUserId(client), .flags = TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 
 					float distance = GetDistance(startPos, endPos);
 					float difference[3];
@@ -258,8 +267,8 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 					if(difference[2] > 65)
 					{
 						Print2(client, "{CHAT}Distance: {YELLOWORANGE}%.2f {CHAT}DiifX: {YELLOWORANGE}%.2f {CHAT}DiffY: {YELLOWORANGE}%.2f {CHAT}DiffZ: {YELLOWORANGE}%.2f {CHAT}MinVelocity: {YELLOWORANGE}Impossible Jump ΔZ>65",
-									distance,
-									difference[0], difference[1], difference[2]);
+							distance,
+							difference[0], difference[1], difference[2]);
 					}
 					else
 					{
@@ -277,9 +286,9 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 
 						float m_flGravity = GetEntityGravity(client);
 
-						float g_flGravityTick = SquareRoot(2 * 800 * 57.0) - (gGravity  * m_flGravity * 1.5 * GetTickInterval());
-						gFallVelocity = -1 * SquareRoot(2 * gGravity * m_flGravity * gFallHeight); // z velocity player should have right before hitting the ground
-						gFallTime = -1 * (gFallVelocity - g_flGravityTick) / gGravity * m_flGravity; // The amount of time the jump should have taken
+						float g_flGravityTick = SquareRoot(2 * 800 * 57.0) - (gF_Gravity  * m_flGravity * 1.5 * GetTickInterval());
+						gFallVelocity = -1 * SquareRoot(2 * gF_Gravity * m_flGravity * gFallHeight); // z velocity player should have right before hitting the ground
+						gFallTime = -1 * (gFallVelocity - g_flGravityTick) / gF_Gravity * m_flGravity; // The amount of time the jump should have taken
 
 						float gInitialVel[3];
 
@@ -300,11 +309,11 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 
 						// Credit to Charles_(hypnos) for the implementation of velocity stuff (https://hyps.dev/)
 						Print2(client, "{CHAT}Distance: {YELLOWORANGE}%.2f {CHAT}DiifX: {YELLOWORANGE}%.2f {CHAT}DiffY: {YELLOWORANGE}%.2f {CHAT}DiffZ: {YELLOWORANGE}%.2f {CHAT}MinVelocity: {YELLOWORANGE}%.2f {CHAT}MinVelocityWith1Tick: {YELLOWORANGE}%.2f",
-										distance,
-										difference[0], difference[1], difference[2], gMinVel, gMinVelOneTick);
+							distance,
+							difference[0], difference[1], difference[2], gMinVel, gMinVelOneTick);
 					}
 
-					gCurrPoint[client] = POINT_A;
+					gI_CurrPoint[client] = POINT_A;
 				}
 			}
 			else
@@ -315,30 +324,30 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 		}
 		case 2: // Show cursor
 		{
-			gShowCursor[client] = !gShowCursor[client];
+			gB_ShowCursor[client] = !gB_ShowCursor[client];
 			OpenMenu(client);
 		}
 		case 3: // Snap to grid
 		{
-			gSnapToGrid[client]++;
-			gSnapToGrid[client] = gSnapToGrid[client] % sizeof(gSnapValues);
+			gI_SnapToGrid[client]++;
+			gI_SnapToGrid[client] = gI_SnapToGrid[client] % sizeof(gI_SnapValues);
 
 			OpenMenu(client);
 		}
 		case 9, 10:
 		{
-			gGap[client] = false;
+			gB_Gap[client] = false;
 
-			if (gPreviewTimer[client] != null)
+			if (gH_PreviewTimer[client] != null)
 			{
-				KillTimer(gPreviewTimer[client]);
-				gPreviewTimer[client] = null;
+				KillTimer(gH_PreviewTimer[client]);
+				gH_PreviewTimer[client] = null;
 			}
 
-			if (gCursorTimer[client] != null)
+			if (gH_CursorTimer[client] != null)
 			{
-				KillTimer(gCursorTimer[client]);
-				gCursorTimer[client] = null;
+				KillTimer(gH_CursorTimer[client]);
+				gH_CursorTimer[client] = null;
 			}
 		}
 
@@ -349,20 +358,20 @@ public int handler(Menu menu, MenuAction action, int client, int item)
 public Action CompleteGap(Handle timer, int userid)
 {
 	int client = GetClientOfUserId(userid);
-	if (!client || !gGap[client])
+	if (!client || !gB_Gap[client])
 	{
-		gPreviewTimer[client] = null;
+		gH_PreviewTimer[client] = null;
 		return Plugin_Stop;
 	}
 
 	float startPos[3], endPos[3];
 
-	startPos = gPointPos[client][ POINT_A ];
-	endPos   = gPointPos[client][ POINT_B ];
+	startPos = gF_PointPos[client][ POINT_A ];
+	endPos   = gF_PointPos[client][ POINT_B ];
 
-	DrawRing(client, startPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gColorGreen, FBEAM_FADEIN);
-	DrawRing(client, endPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gColorRed, FBEAM_FADEIN);
-	DrawLine(client, startPos, endPos, 1.0, PREVIEW_TIME, gColorWhite);
+	DrawRing(client, startPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gI_ColorGreen, FBEAM_FADEIN);
+	DrawRing(client, endPos, RING_START_RADIUS, RING_END_RADIUS, PREVIEW_TIME, gI_ColorRed, FBEAM_FADEIN);
+	DrawLine(client, startPos, endPos, 1.0, PREVIEW_TIME, gI_ColorWhite);
 
 	return Plugin_Continue;
 }
@@ -384,9 +393,9 @@ bool GetAimPosition(int client, float endPosition[3])
 	{
 		TR_GetEndPosition(endPosition, null);
 
-		if (gSnapToGrid[client])
+		if (gI_SnapToGrid[client])
 		{
-			endPosition = SnapToGrid(endPosition, gSnapValues[ gSnapToGrid[client] ], true);
+			endPosition = SnapToGrid(endPosition, gI_SnapValues[ gI_SnapToGrid[client] ], true);
 		}
 		return true;
 	}
@@ -405,17 +414,17 @@ stock void DrawLine(int client, float start[3], float end[3], float width, float
 	GetClientAbsOrigin(client, origin);
 
 	TE_SetupBeamPoints(start, end,
-				.ModelIndex = gModelIndex,
-				.HaloIndex = 0,
-				.StartFrame = 0,
-				.FrameRate = 0,
-				.Life = life,
-				.Width = width,
-				.EndWidth = width,
-				.FadeLength = 0,
-				.Amplitude = 0.0,
-				.Color = color,
-				.Speed = 0);
+		.ModelIndex = gI_ModelIndex,
+		.HaloIndex = 0,
+		.StartFrame = 0,
+		.FrameRate = 0,
+		.Life = life,
+		.Width = width,
+		.EndWidth = width,
+		.FadeLength = 0,
+		.Amplitude = 0.0,
+		.Color = color,
+		.Speed = 0);
 
 	TE_SendToAllInRange(origin, RangeType_Visibility, .delay = 0.0);
 }
@@ -426,25 +435,25 @@ stock void DrawRing(int client, float center[3], float startRadius, float endRad
 	GetClientAbsOrigin(client, origin);
 
 	TE_SetupBeamRingPoint(center,
-				.Start_Radius = startRadius,
-				.End_Radius = endRadius,
-				.ModelIndex = gModelIndex,
-				.HaloIndex = 0,
-				.StartFrame = 0,
-				.FrameRate = 30,
-				.Life = life,
-				.Width = 2.0,
-				.Amplitude = 0.0,
-				.Color = color,
-				.Speed = 3,
-				.Flags = flags);
+		.Start_Radius = startRadius,
+		.End_Radius = endRadius,
+		.ModelIndex = gI_ModelIndex,
+		.HaloIndex = 0,
+		.StartFrame = 0,
+		.FrameRate = 30,
+		.Life = life,
+		.Width = 2.0,
+		.Amplitude = 0.0,
+		.Color = color,
+		.Speed = 3,
+		.Flags = flags);
 
 	TE_SendToAllInRange(origin, RangeType_Visibility, .delay = 0.0);
 }
 
 stock void DrawCursor(int client, float center[3], float width, float life, int color[4])
 {
-	if (!gShowCursor[client])
+	if (!gB_ShowCursor[client])
 	{
 		return;
 	}
@@ -453,8 +462,8 @@ stock void DrawCursor(int client, float center[3], float width, float life, int 
 
 	for (int i = 0; i < 3; i++)
 	{
-		line[ i ].start = gCursorStart[ i ];
-		line[ i ].end = gCursorEnd[ i ];
+		line[ i ].start = gF_CursorStart[ i ];
+		line[ i ].end = gF_CursorEnd[ i ];
 
 		//RotateClockwise(line[ i ].start, 45.0);
 		//RotateClockwise(line[ i ].end, 45.0);
@@ -468,27 +477,27 @@ stock void DrawCursor(int client, float center[3], float width, float life, int 
 
 void ResetVariables(int client)
 {
-	gGap[client] = false;
-	gCurrPoint[client] = POINT_A;
+	gB_Gap[client] = false;
+	gI_CurrPoint[client] = POINT_A;
 
 	for (int i = 0; i < NUM_POINTS; i++)
 	{
-		gPointPos[client][i] = NULL_VECTOR;
+		gF_PointPos[client][i] = NULL_VECTOR;
 	}
 
-	gSnapToGrid[client] = 0; // off
-	gShowCursor[client] = true;
+	gI_SnapToGrid[client] = 0; // off
+	gB_ShowCursor[client] = true;
 
-	if (gPreviewTimer[client] != null)
+	if (gH_PreviewTimer[client] != null)
 	{
-		KillTimer(gPreviewTimer[client]);
-		gPreviewTimer[client] = null;
+		KillTimer(gH_PreviewTimer[client]);
+		gH_PreviewTimer[client] = null;
 	}
 
-	if (gCursorTimer[client] != null)
+	if (gH_CursorTimer[client] != null)
 	{
-		KillTimer(gCursorTimer[client]);
-		gCursorTimer[client] = null;
+		KillTimer(gH_CursorTimer[client]);
+		gH_CursorTimer[client] = null;
 	}
 }
 
@@ -501,18 +510,18 @@ float GetDistance(float startPos[3], float endPos[3])
 
 stock float[] SnapToGrid(float pos[3], int grid, bool third)
 {
-    float origin[3];
-    origin = pos;
+	float origin[3];
+	origin = pos;
 
-    origin[0] = float(RoundToNearest(pos[0] / grid) * grid);
-    origin[1] = float(RoundToNearest(pos[1] / grid) * grid);
+	origin[0] = float(RoundToNearest(pos[0] / grid) * grid);
+	origin[1] = float(RoundToNearest(pos[1] / grid) * grid);
 
-    if(third)
-    {
-        origin[2] = float(RoundToNearest(pos[2] / grid) * grid);
-    }
+	if(third)
+	{
+		origin[2] = float(RoundToNearest(pos[2] / grid) * grid);
+	}
 
-    return origin;
+	return origin;
 }
 
 stock void RotateClockwise(float p[3], float angle) // 2d
