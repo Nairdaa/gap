@@ -74,12 +74,12 @@ public void OnPluginStart()
 	sv_gravity.AddChangeHook(OnGravityChanged);
 	gF_Gravity = sv_gravity.FloatValue;
 
-	if (gEV_Type != Engine_CSS || gEV_Type != Engine_CSGO)
+	if ((gEV_Type != Engine_CSS) || (gEV_Type != Engine_CSGO))
 	{
 		SetFailState("Game not supported.");
 	}
 
-	if(gEV_Type == Engine_CSS)
+	if (gEV_Type == Engine_CSS)
 	{
 		gCV_BeamMaterial = CreateConVar("gap_beams_material", "sprites/laser.vmt", "Material used for beams. Server restart needed for this to take effect.");
 	}
@@ -146,7 +146,7 @@ void OpenMenu(int client)
 		panel.DrawItem(gridText);
 	}
 
-	if(gEV_Type == Engine_CSS)
+	if (gEV_Type == Engine_CSS)
 	{
 		panel.CurrentKey = 10;
 	}
